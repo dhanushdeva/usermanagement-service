@@ -1,0 +1,71 @@
+# ---------------------------------------------------------------------------
+# User Management Service - local configuration
+# Every value can be overridden with an environment variable (shown in ${...}).
+# Defaults match the local Keycloak realm in docker/keycloak/realm-import.
+# ---------------------------------------------------------------------------
+server:
+  port: ${SERVER_PORT:9012}
+
+spring:
+  application:
+    name: usermanagement-service
+  messages:
+    basename: messages/messages
+    fallback-to-system-locale: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Public keys used to verify the signature of incoming caller tokens
+          jwk-set-uri: ${keycloak.server-url}/realms/${keycloak.realm}/protocol/openid-connect/certs
+
+# Connection to the Keycloak that stores users and roles
+keycloak:
+  server-url: ${KEYCLOAK_URL:http://localhost:8080}
+  realm: ${KEYCLOAK_REALM:usermanagement-local}
+  connect-timeout: 5s
+  read-timeout: 10s
+  # true = user must change the password on first login
+  temporary-password: false
+  # Confidential client with a service account that has realm-management roles
+  admin-client:
+    client-id: ${KEYCLOAK_ADMIN_CLIENT_ID:um-admin}
+    client-secret: ${KEYCLOAK_ADMIN_CLIENT_SECRET:um-admin-local-secret}
+  # Confidential client used to issue anonymous (guest) tokens
+  anonymous-client:
+    client-id: ${KEYCLOAK_ANONYMOUS_CLIENT_ID:um-anonymous}
+    client-secret: ${KEYCLOAK_ANONYMOUS_CLIENT_SECRET:um-anonymous-local-secret}
+  # When enabled, new users get a "verify email + set password" mail instead of a password (needs SMTP in the realm)
+  email-verification:
+    enabled: false
+    link-lifespan: 15m
+    redirect-uri: http://localhost:${server.port}/swagger-ui/index.html
+
+app:
+  security:
+    # URLs that do not need a bearer token
+    public-urls:
+      - /usermanagement/anonymous
+      - /swagger-ui.html
+      - /swagger-ui/**
+      - /v3/api-docs/**
+      - /actuator/health/**
+      - /actuator/info
+    # Keycloak realm roles allowed to call each protected API (any one of the listed roles is enough)
+    api-roles:
+      register-user: [USER_MANAGEMENT_ADMIN]
+      update-user: [USER_MANAGEMENT_ADMIN]
+      delete-users: [USER_MANAGEMENT_ADMIN]
+      change-user-status: [USER_MANAGEMENT_ADMIN]
+      create-role: [USER_MANAGEMENT_ADMIN]
+      delete-role: [USER_MANAGEMENT_ADMIN]
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.usermanagement: INFO

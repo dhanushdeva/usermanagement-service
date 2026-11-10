@@ -1,0 +1,51 @@
+# Local stack: PostgreSQL + Keycloak (realm auto-imported) and, optionally, the service itself.
+#   Keycloak only:          docker compose up -d
+#   Keycloak + service:     .\gradlew.bat bootJar ; docker compose --profile app up -d --build
+name: usermanagement-local
+
+services:
+  keycloak-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./docker/keycloak/realm-import:/opt/keycloak/data/import:ro
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+
+  usermanagement-service:
+    profiles: ["app"]
+    build: .
+    environment:
+      # Inside the compose network Keycloak is reachable by its service name
+      KEYCLOAK_URL: http://keycloak:8080
+    ports:
+      - "9012:9012"
+    depends_on:
+      - keycloak
+
+volumes:
+  keycloak-db-data:
