@@ -1,9 +1,7 @@
 package com.usermanagement.service.impl;
 
 import java.util.List;
-
 import org.springframework.stereotype.Service;
-
 import com.usermanagement.constants.UserStatus;
 import com.usermanagement.dto.RoleDto;
 import com.usermanagement.dto.UserDto;
