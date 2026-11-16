@@ -1,71 +1,80 @@
-# ---------------------------------------------------------------------------
-# User Management Service - local configuration
-# Every value can be overridden with an environment variable (shown in ${...}).
-# Defaults match the local Keycloak realm in docker/keycloak/realm-import.
-# ---------------------------------------------------------------------------
+﻿# =============================================================================
+# User Management Service - LOCAL configuration
+# Same keys as bm-usermanagement-v4; every URL points to localhost and to the
+# local Keycloak (realm "master").
+# =============================================================================
 server:
-  port: ${SERVER_PORT:9012}
+  forward-headers-strategy: FRAMEWORK
+  servlet:
+    context-path: /
+  max-http-request-header-size: '200000'
+  port: '9012'
 
 spring:
   application:
-    name: usermanagement-service
-  messages:
-    basename: messages/messages
-    fallback-to-system-locale: false
+    name: User Management
+  config:
+    # local secrets (UM_ADMIN_CLIENT_SECRET, UM_ANONYMOUS_CLIENT_SECRET); optional so environment variables also work
+    import: optional:file:./secrets.properties
+  main:
+    banner-mode: 'off'
   security:
     oauth2:
       resourceserver:
         jwt:
-          # Public keys used to verify the signature of incoming caller tokens
-          jwk-set-uri: ${keycloak.server-url}/realms/${keycloak.realm}/protocol/openid-connect/certs
-
-# Connection to the Keycloak that stores users and roles
-keycloak:
-  server-url: ${KEYCLOAK_URL:http://localhost:8080}
-  realm: ${KEYCLOAK_REALM:usermanagement-local}
-  connect-timeout: 5s
-  read-timeout: 10s
-  # true = user must change the password on first login
-  temporary-password: false
-  # Confidential client with a service account that has realm-management roles
-  admin-client:
-    client-id: ${KEYCLOAK_ADMIN_CLIENT_ID:um-admin}
-    client-secret: ${KEYCLOAK_ADMIN_CLIENT_SECRET:um-admin-local-secret}
-  # Confidential client used to issue anonymous (guest) tokens
-  anonymous-client:
-    client-id: ${KEYCLOAK_ANONYMOUS_CLIENT_ID:um-anonymous}
-    client-secret: ${KEYCLOAK_ANONYMOUS_CLIENT_SECRET:um-anonymous-local-secret}
-  # When enabled, new users get a "verify email + set password" mail instead of a password (needs SMTP in the realm)
-  email-verification:
-    enabled: false
-    link-lifespan: 15m
-    redirect-uri: http://localhost:${server.port}/swagger-ui/index.html
+          # public keys of the local realm, used to verify the caller's bearer token
+          jwk-set-uri: ${bm.idp.keycloak.url}/realms/${bm.idp.keycloak.admin.realm}/protocol/openid-connect/certs
 
 app:
   security:
-    # URLs that do not need a bearer token
-    public-urls:
-      - /usermanagement/anonymous
-      - /swagger-ui.html
-      - /swagger-ui/**
-      - /v3/api-docs/**
-      - /actuator/health/**
-      - /actuator/info
-    # Keycloak realm roles allowed to call each protected API (any one of the listed roles is enough)
-    api-roles:
-      register-user: [USER_MANAGEMENT_ADMIN]
-      update-user: [USER_MANAGEMENT_ADMIN]
-      delete-users: [USER_MANAGEMENT_ADMIN]
-      change-user-status: [USER_MANAGEMENT_ADMIN]
-      create-role: [USER_MANAGEMENT_ADMIN]
-      delete-role: [USER_MANAGEMENT_ADMIN]
+    # comma separated; these URLs need no token (everything else needs a Bearer token)
+    public-urls: /usermanagement/anonymous,/swagger-ui.html,/swagger-ui/**,/v3/**,/actuator/**,/error
 
+bm:
+  idp:
+    provider: keycloak
+    keycloak:
+      # true = user must change the password on first login
+      isTemporary: false
+      # true = no password on register; Keycloak sends a "verify email + set password" mail (needs SMTP in the realm)
+      enableEmailVerification: false
+      url: http://localhost:8080
+      email_lifespan: 900
+      admin:
+        # realm that holds the users and roles
+        realm: master
+        # confidential client with a service account that has realm-management roles
+        client_id: um-admin
+        client_secret: ${UM_ADMIN_CLIENT_SECRET}
+        redirect_url: http://localhost:9012/*
+      anonymous:
+        # confidential client used to issue anonymous (guest) tokens
+        client_id: um-anonymous
+        client_secret: ${UM_ANONYMOUS_CLIENT_SECRET}
+
+service:
+  server_url: http://localhost:${server.port}/
+
+# Keycloak realm roles allowed to call each API (comma separated). Same as the original: PM_CREATE for everything.
+apipermission:
+  api:
+    register: PM_CREATE
+    deleteUsers: PM_CREATE
+    retrieveAndDeleteAnonymousUser: PM_CREATE
+    validateIdpRole: PM_CREATE
+    addRole: PM_CREATE
+    deleteRole: PM_CREATE
+    updateUser: PM_CREATE
+    changeUserStatus: PM_CREATE
+    roleAndComposite: PM_CREATE
+    userInformation: PM_CREATE
+    resendVerificationMail: PM_CREATE
+    users: PM_CREATE
+
+# actuator on the application port: http://localhost:9012/actuator/health
 management:
   endpoints:
     web:
       exposure:
         include: health,info
 
-logging:
-  level:
-    com.usermanagement: INFO

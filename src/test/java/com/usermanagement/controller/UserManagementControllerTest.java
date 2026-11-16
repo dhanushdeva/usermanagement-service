@@ -1,12 +1,11 @@
 package com.usermanagement.controller;
 
-import static org.hamcrest.Matchers.not;
-import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -21,10 +20,10 @@ import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequ
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import com.usermanagement.dto.UserDto;
-import com.usermanagement.entity.AnonymousUserResponse;
-import com.usermanagement.exception.ErrorCode;
-import com.usermanagement.exception.UserManagementException;
+import com.usermanagement.dto.User;
+import com.usermanagement.entity.AnonymousUser;
+import com.usermanagement.exception.ErrorCodeConstants;
+import com.usermanagement.exception.UserAlreadyExistsException;
 import com.usermanagement.service.UserManagementService;
 
 @SpringBootTest
@@ -32,7 +31,7 @@ import com.usermanagement.service.UserManagementService;
 class UserManagementControllerTest {
 
     private static final String REGISTER_BODY = """
-            {"user": {"userName": "john", "password": "secret", "email": "john@example.com", "roles": ["CUSTOMER"]}}
+            {"user": {"userName": "john", "password": "secret", "email": "john@example.com", "roles": ["CUSTOMER"], "status": "ENABLE"}}
             """;
 
     @Autowired
@@ -44,14 +43,16 @@ class UserManagementControllerTest {
     @MockitoBean
     private JwtDecoder jwtDecoder;
 
-    private static JwtRequestPostProcessor admin() {
-        return jwt().authorities(new SimpleGrantedAuthority("ROLE_USER_MANAGEMENT_ADMIN"));
+    /** Caller whose token has the realm role configured in apipermission.api.* (PM_CREATE). */
+    private static JwtRequestPostProcessor permitted() {
+        return jwt().authorities(new SimpleGrantedAuthority("ROLE_PM_CREATE"));
     }
 
     @Test
-    void anonymousEndpointIsPublic() throws Exception {
-        given(userManagementService.createAnonymousUser())
-                .willReturn(new AnonymousUserResponse(null, "guest", "access", "refresh"));
+    void anonymousIsPublic() throws Exception {
+        var anonymousUser = new AnonymousUser();
+        anonymousUser.setAccessToken("access");
+        given(userManagementService.createAnonymousUser()).willReturn(anonymousUser);
 
         mockMvc.perform(post("/usermanagement/anonymous"))
                 .andExpect(status().isOk())
@@ -60,53 +61,163 @@ class UserManagementControllerTest {
 
     @Test
     void protectedEndpointWithoutTokenReturns401() throws Exception {
-        mockMvc.perform(post("/usermanagement/updateUser").contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/usermanagement/getUsers").param("search", "x")).andExpect(status().isUnauthorized());
     }
 
     @Test
-    void callerWithoutConfiguredRoleGets403() throws Exception {
-        mockMvc.perform(post("/usermanagement/updateUser").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER")))
-                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+    void tokenWithoutPermissionReturns403UM112() throws Exception {
+        mockMvc.perform(get("/usermanagement/getUsers").param("search", "x")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.errorCode").value("UM112"));
+                .andExpect(jsonPath("$.httpStatus").value(403))
+                .andExpect(jsonPath("$.errorCode").value("UM112"))
+                .andExpect(jsonPath("$.details.errorCode").value("UM112"));
     }
 
     @Test
-    void registerReturns201WithUserIdAndWithoutPassword() throws Exception {
-        given(userManagementService.registerUser(any(UserDto.class))).willReturn("new-id");
+    void registerReturns201WithUserId() throws Exception {
+        given(userManagementService.registerUser(any(User.class))).willReturn("new-id");
 
-        mockMvc.perform(post("/usermanagement/register").with(admin())
+        mockMvc.perform(post("/usermanagement/register").with(permitted())
                         .contentType(MediaType.APPLICATION_JSON).content(REGISTER_BODY))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.userId").value("new-id"))
-                .andExpect(content().string(not(containsString("secret"))));
+                .andExpect(jsonPath("$.userName").value("john"));
     }
 
     @Test
-    void registerWithoutUserReturns400() throws Exception {
-        mockMvc.perform(post("/usermanagement/register").with(admin())
+    void registerWithoutUserReturnsUM107() throws Exception {
+        mockMvc.perform(post("/usermanagement/register").with(permitted())
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errorCode").value("UM107"));
+                .andExpect(jsonPath("$.errorCode").value("UM107"))
+                .andExpect(jsonPath("$.details.entity").value("user"));
     }
 
     @Test
-    void existingUserReturns409() throws Exception {
-        given(userManagementService.registerUser(any(UserDto.class)))
-                .willThrow(new UserManagementException(ErrorCode.USER_ALREADY_EXISTS, "john"));
+    void registerWithoutEmailReturnsUM113() throws Exception {
+        mockMvc.perform(post("/usermanagement/register").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user\": {\"userName\": \"john\", \"status\": \"ENABLE\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("UM113"))
+                .andExpect(jsonPath("$.details.entity").value("email"));
+    }
 
-        mockMvc.perform(post("/usermanagement/register").with(admin())
+    @Test
+    void registerWithWrongStatusValueReturnsUM111() throws Exception {
+        mockMvc.perform(post("/usermanagement/register").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user\": {\"userName\": \"john\", \"email\": \"j@e.com\", \"roles\": [], \"status\": \"disabled\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("UM111"))
+                .andExpect(jsonPath("$.details.entity").value("status"));
+    }
+
+    @Test
+    void registerWithoutRolesReturnsUM117() throws Exception {
+        mockMvc.perform(post("/usermanagement/register").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user\": {\"userName\": \"john\", \"email\": \"j@e.com\", \"status\": \"ENABLE\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("UM117"))
+                .andExpect(jsonPath("$.details.entity").value("roles"));
+    }
+
+    @Test
+    void registerWithoutUserNameReturnsUM116() throws Exception {
+        mockMvc.perform(post("/usermanagement/register").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user\": {\"email\": \"j@e.com\", \"roles\": [], \"status\": \"ENABLE\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("UM116"));
+    }
+
+    @Test
+    void registerWithoutStatusReturnsUM111() throws Exception {
+        mockMvc.perform(post("/usermanagement/register").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user\": {\"userName\": \"john\", \"email\": \"john@example.com\", \"roles\": []}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("UM111"))
+                .andExpect(jsonPath("$.details.entity").value("status"));
+    }
+
+    @Test
+    void existingUserReturns409UM005() throws Exception {
+        given(userManagementService.registerUser(any(User.class))).willThrow(
+                new UserAlreadyExistsException(ErrorCodeConstants.MSG_USER_EXISTS, ErrorCodeConstants.USER_EXISTS, "john"));
+
+        mockMvc.perform(post("/usermanagement/register").with(permitted())
                         .contentType(MediaType.APPLICATION_JSON).content(REGISTER_BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("UM005"));
     }
 
     @Test
-    void invalidStatusReturns400() throws Exception {
-        mockMvc.perform(post("/usermanagement/changeUserStatus").with(admin())
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"userId\": \"u1\", \"status\": \"PAUSED\"}"))
+    void updateUserWithoutUserIdReturnsUM108() throws Exception {
+        mockMvc.perform(post("/usermanagement/updateUser").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"user\": {\"firstName\": \"John\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("UM108"));
+    }
+
+    @Test
+    void deleteUsersWithoutIdsReturnsUM108() throws Exception {
+        mockMvc.perform(delete("/usermanagement/deleteUsers").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("UM108"));
+    }
+
+    @Test
+    void changeUserStatusRejectsLowerCaseStatusWithUM111() throws Exception {
+        mockMvc.perform(post("/usermanagement/changeUserStatus").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"userId\": \"u1\", \"status\": \"enable\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("UM111"));
+    }
+
+    @Test
+    void changeUserStatusWithoutUserIdReturnsUM110() throws Exception {
+        mockMvc.perform(post("/usermanagement/changeUserStatus").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\": \"ENABLE\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("UM110"))
+                .andExpect(jsonPath("$.details.entity").value("user.id"));
+    }
+
+    @Test
+    void addRoleWithoutNameReturnsUM109() throws Exception {
+        mockMvc.perform(post("/usermanagement/addRole").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"roles\": {\"description\": \"x\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("UM109"));
+    }
+
+    @Test
+    void validateIdpRoleReturns404WhenRoleMissing() throws Exception {
+        given(userManagementService.validateRole("NOPE")).willReturn(false);
+
+        mockMvc.perform(post("/usermanagement/validateIdpRole").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"configurations\": {\"role.name\": \"NOPE\"}}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.message").value("Role Not Found"));
+    }
+
+    @Test
+    void validateIdpRoleWithoutRoleNameReturnsUM105() throws Exception {
+        mockMvc.perform(post("/usermanagement/validateIdpRole").with(permitted())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"configurations\": {}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("UM105"));
+    }
+
+    @Test
+    void createRoleIfNotExistOnlyNeedsAValidToken() throws Exception {
+        mockMvc.perform(get("/usermanagement/createRoleIfNotExist").param("roleName", "R1")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
+                .andExpect(status().isOk());
     }
 }

@@ -2,27 +2,44 @@ package com.usermanagement.service;
 
 import java.util.List;
 
-import com.usermanagement.constants.UserStatus;
-import com.usermanagement.dto.RoleDto;
-import com.usermanagement.dto.UserDto;
-import com.usermanagement.entity.AnonymousUserResponse;
+import com.usermanagement.dto.Roles;
+import com.usermanagement.dto.User;
+import com.usermanagement.entity.AnonymousUser;
+import com.usermanagement.entity.RoleDetails;
+import com.usermanagement.entity.UserInformation;
 
 /**
- * Business operations exposed by the user management API.
+ * Operations of the user management service (same as bm-usermanagement-v4).
  */
 public interface UserManagementService {
 
-    AnonymousUserResponse createAnonymousUser();
+    AnonymousUser createAnonymousUser();
 
-    String registerUser(UserDto user);
-
-    UserDto updateUser(UserDto user);
+    String registerUser(User user);
 
     void deleteUsers(List<String> userIds);
 
-    void changeUserStatus(String userId, UserStatus status);
+    void retrieveAndDeleteAnonymousUser();
 
-    String createRole(RoleDto role);
+    String addRole(Roles roles);
 
-    void deleteRole(String roleName);
+    String deleteRole(String roleName);
+
+    boolean validateRole(String roleToValidate);
+
+    RoleDetails createRoleIfNotExist(String role);
+
+    RoleDetails getRoleAndComposite(String role);
+
+    User updateUser(User user);
+
+    void resendVerificationMail(String userId);
+
+    Boolean changeUserStatus(String userId, String status);
+
+    UserInformation getUserInformation(String userId);
+
+    List<User> getUsers(String search);
+
+    User getUserById(String userId);
 }

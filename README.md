@@ -1,143 +1,101 @@
-# usermanagement-service
+# usermanagement-service (local replica of bm-usermanagement-v4)
 
-A standalone local replica of `bm-usermanagement-v4`. It exposes the same `/usermanagement/*` REST API and manages users and realm roles in **your own local Keycloak** (Docker).
+Same 15 endpoints, request/response bodies, validations, error codes and Keycloak flow as `bm-usermanagement-v4`,
+but running fully on **localhost** against a **local Keycloak**, with no internal libraries
+(bm-authorization, bm-logging-utils, bm-mcp, Kafka, Nexus).
 
-It uses no internal libraries: there is no bm-authorization, bm-logging-utils, bm-mcp, internal BOMs or Nexus.
+## How it maps to the original
 
-| Original (internal) | Replaced with |
+| bm-usermanagement-v4 | This project |
 |---|---|
-| bm-authorization (`@Authorize`, permission JSON) | Spring Security OAuth2 resource server + `@PreAuthorize("@apiAccess.isAllowed('<api>')")`, with roles configured in `app.security.api-roles` |
-| bm-logging-utils | Plain SLF4J / Logback (Spring Boot default) |
-| keycloak-admin-client library | `KeycloakAdminClient`, a small wrapper around the Keycloak Admin REST API using Spring `RestClient` |
-| dev/test environment URLs | `localhost` only |
+| `UserManagementController` | `controller/UserManagementController` (same code, same `@Hidden` endpoints) |
+| `UserManagementService` / `UserManagementServiceImpl` | `service/UserManagementService`, `service/impl/UserManagementServiceImpl` |
+| `datasource/IdentityProvider` | `datasource/IdentityProvider` |
+| `KeycloakServiceProvider` | `datasource/provider/keycloak/KeycloakServiceProvider` (same methods, same flow) |
+| `HttpHandler` | `util/HttpHandler` |
+| `MessageUtil`, `MessageSourceConfiguration` | `util/MessageUtil`, `config/MessageSourceConfiguration` |
+| `SecurityConfiguration` (`apipermission.api.*`) | `config/SecurityConfiguration` (same keys) |
+| bm-authorization library (token check, public URLs, roles) | `config/WebSecurityConfiguration` + `security/KeycloakRealmRoleConverter` |
+| `UMExceptionHandler`, all exception classes, `ErrorCodeConstants`, `UMErrorCodeConstants` | `exception/*` (same classes, same HTTP status per error) |
+| request DTOs + `User`, `Roles`, `Attribute` | `dto/*` |
+| responses (`AnonymousUser`, `RoleDetails`, ...) + `KeycloakDTO*` | `entity/*` |
+| `bm.idp.keycloak.*` pointing to int-fall25 | `bm.idp.keycloak.*` pointing to `http://localhost:8080`, realm `master` |
 
-## Project structure
+## Endpoints (all under `/usermanagement`)
 
-```
-src/main/java/com/usermanagement
-├── UserManagementApplication.java      entry point
-├── config/                             KeycloakProperties, SecurityProperties, SecurityConfig, KeycloakClientConfig, OpenApiConfig
-├── controller/UserManagementController REST endpoints (/usermanagement/*)
-├── identityprovider/
-│   ├── IdentityProvider                interface (swap Keycloak for another IdP here)
-│   └── keycloak/
-│       ├── KeycloakIdentityProvider    user/role logic (register, update, role diff...)
-│       ├── KeycloakAdminClient         HTTP calls to the Keycloak Admin API + cached admin token
-│       ├── KeycloakErrorTranslator     Keycloak HTTP errors -> ErrorCode
-├── security/                           KeycloakRealmRoleConverter (realm roles -> ROLE_*), ApiAccessChecker ("apiAccess" bean)
-├── dto/                                request payloads (UserRequest, UserDto, ...)
-├── entity/                             response objects (AnonymousUserResponse, ErrorResponse) + Keycloak representations
-├── service/ + service/impl/            business interface + implementation
-├── constants/UserStatus                ENABLE / DISABLE
-└── exception/                          ErrorCode (UMxxx), UserManagementException, GlobalExceptionHandler
-src/main/resources
-├── application.yaml                    all settings (env-overridable)
-└── messages/messages.properties        error messages per code
-docker/keycloak/realm-import/           realm imported automatically on Keycloak start
-docker-compose.yml, Dockerfile
-```
+| # | Method & path | Swagger | Permission key (`apipermission.api.*`) | Success |
+|---|---|---|---|---|
+| 1 | POST `/anonymous` | visible | public | 200 guest token |
+| 2 | POST `/register` | visible | register | 201 user + `userId` |
+| 3 | POST `/updateUser` | visible | updateUser | 200 user |
+| 4 | DELETE `/deleteUsers` | visible | deleteUsers | 204 |
+| 5 | POST `/addRole` | visible | addRole | 201 role |
+| 6 | DELETE `/deleteRole` | visible | deleteRole | 204 |
+| 7 | POST `/changeUserStatus` | visible | changeUserStatus | 204 |
+| 8 | GET `/retrieveAndDeleteAnonymousUser` | hidden | retrieveAndDeleteAnonymousUser | 204 (does nothing, as in original) |
+| 9 | POST `/validateIdpRole` | hidden | validateIdpRole | 200 Role Found / 404 Role Not Found |
+| 10 | GET `/getRoleAndComposite?roleName=` | hidden | roleAndComposite | 200 |
+| 11 | GET `/getUserInformation?userId=` | hidden | userInformation | 200 |
+| 12 | POST `/resendVerificationMail?userId=` | hidden | resendVerificationMail | 204 (404 UM112 when email verification is off) |
+| 13 | GET `/getUsers?search=` | hidden | users | 200 list |
+| 14 | GET `/getUserById?userId=` | hidden | users | 200 |
+| 15 | GET `/createRoleIfNotExist?roleName=` | hidden | none (any valid token, as in original) | 200 |
+
+"Hidden" = not shown in Swagger UI (`@Hidden`, exactly like the original), but callable (Postman).
+
+Error body (same as original):
+`{"timestamp","httpStatus","errorCode","message","details":{"errorCode","message","entity"}}`
+
+## Secrets (never in git)
+
+The Keycloak client secrets are not in `application.yaml`. Copy `secrets.properties.example` to
+`secrets.properties` (project root, ignored by git) and fill in `UM_ADMIN_CLIENT_SECRET` and
+`UM_ANONYMOUS_CLIENT_SECRET` from Keycloak (Clients > client > Credentials). Environment variables with the same
+names work too and take priority. Without them the service refuses to start.
 
 ## Run locally
 
-Prerequisites: Java 21 and a Keycloak on http://localhost:8080 (local install or Docker; Docker is optional - the Dockerfile/docker-compose.yml are only a convenience, there is no Jenkins/Nexus publishing).
+1. Start Keycloak on `http://localhost:8080` and create the roles, clients and test user described in KEYCLOAK_SETUP.md (realm `master`)
+2. Start the service: `gradlew bootRun`, or run `UserManagementApplication` from the IDE. Port **9012**.
+3. Swagger: **http**://localhost:9012/swagger-ui/index.html. Postman: import the two files in `postman/`.
+4. Health: http://localhost:9012/actuator/health
 
-For manual Keycloak setup, which values to copy into `application.yaml`, and why, see **[KEYCLOAK_SETUP.md](KEYCLOAK_SETUP.md)**.
+The service speaks plain **http**. If the browser shows `ERR_SSL_PROTOCOL_ERROR`, it switched to https:
+type the full `http://` URL; if Chrome keeps switching, open `chrome://net-internals/#hsts`, enter `localhost`
+under **Delete domain security policies** and click **Delete**. `http://localhost:9012/` itself has no page;
+use the Swagger URL.
 
-```powershell
-# 1. Start Keycloak (+ Postgres). The realm "usermanagement-local" is imported automatically.
-docker compose up -d
-# Keycloak admin console: http://localhost:8080  (admin / admin)
-
-# 2. Start the service on http://localhost:9012
-.\gradlew.bat bootRun
-
-# Swagger UI: http://localhost:9012/swagger-ui/index.html
-```
-
-To run the service in Docker as well:
-
-```powershell
-.\gradlew.bat bootJar
-docker compose --profile app up -d --build
-```
-
-### What the realm import creates
+Create these once in the `master` realm (steps in KEYCLOAK_SETUP.md):
 
 | Item | Purpose |
 |---|---|
-| Realm roles `USER_MANAGEMENT_ADMIN`, `ANONYMOUS_USER`, `CUSTOMER` | API access role, guest role, sample role |
-| Client `um-admin` (secret `um-admin-local-secret`) | The service's own client for calling the Admin API. Its service account has the realm-management roles `manage-users`, `view-users`, `query-users`, `view-realm` and `manage-realm` |
-| Client `um-anonymous` (secret `um-anonymous-local-secret`) | Issues guest tokens for `/anonymous` |
-| Client `um-api-caller` (secret `um-api-caller-local-secret`) | Use it from curl/Postman; its service account has `USER_MANAGEMENT_ADMIN` |
-| User `local.admin` / `admin123` | Test user with `USER_MANAGEMENT_ADMIN` (password grant through `um-api-caller`) |
-| User profile: unmanaged attributes **Enabled** | Required (Keycloak 24+) to store `entity_type`, `entity_id` and custom attributes |
+| Realm role `PM_CREATE` | The permission role of every protected API (same as `apipermission.api.*` in the original) |
+| Client `um-admin` | Used by the service to call the Keycloak Admin API (service account has realm-management roles and the `kc-admin-api` scope); secret in `secrets.properties` |
+| Client `um-anonymous` | Used by `/anonymous`; secret in `secrets.properties` |
+| Client `um-api-caller` | Use it in Postman to get a token; its secret goes into the Postman environment only |
+| User `local.admin` / `admin123` | Test caller with `PM_CREATE` |
 
-If you create the realm by hand instead, set **Realm settings → General → Unmanaged attributes → Enabled**.
+These are local development secrets; never reuse them anywhere else.
 
-These secrets are local development placeholders. Never reuse them in a real environment.
+## Behaviour kept exactly as in the original (be aware when testing)
 
-## Try it (PowerShell)
+- `register` needs a `roles` array (can be empty `[]`); without it the original fails with HTTP 500.
+- `register` echoes the request user, including `password`, plus the new `userId`.
+- `updateUser` does not read the user first: missing `status` re-enables the user; attributes, when given,
+  replace all existing attributes; `roles`, when given, removes **all** current realm roles
+  (including `default-roles-master`) and assigns the new ones.
+- `updateUser` with `entityType` writes it under the `entity_id` attribute (bug in the original, kept on purpose).
+- `changeUserStatus` accepts only `ENABLE` / `DISABLE` in upper case.
+- A new admin token is requested from Keycloak for every operation.
+- Keycloak not reachable returns 500 `UM999` (only an SSL handshake failure gives `UM001`).
 
-```powershell
-# Token for calling the API
-$token = (Invoke-RestMethod -Method Post `
-  -Uri http://localhost:8080/realms/usermanagement-local/protocol/openid-connect/token `
-  -Body @{ grant_type='client_credentials'; client_id='um-api-caller'; client_secret='um-api-caller-local-secret' }).access_token
-$h = @{ Authorization = "Bearer $token" }
+## Not replicated (internal-only)
 
-# Register a user
-$body = '{"user":{"userName":"john","password":"Pass@123","email":"john@example.com","firstName":"John","lastName":"Doe","entityType":"CUSTOMER","entityId":"C-1","roles":["CUSTOMER"]}}'
-$user = Invoke-RestMethod -Method Post -Uri http://localhost:9012/usermanagement/register -Headers $h -ContentType 'application/json' -Body $body
-
-
-# Public guest token (no auth)
-Invoke-RestMethod -Method Post http://localhost:9012/usermanagement/anonymous
-```
-
-## Endpoints
-
-All paths are under `/usermanagement`. Every endpoint except `/anonymous` needs a Bearer token whose realm roles match `app.security.api-roles.<key>`.
-
-| Method & path | api-roles key | Success |
-|---|---|---|
-| POST `/anonymous` | public | 200 guest token |
-| POST `/register` `{"user":{...}}` | register-user | 201 user (with `userId`, without password) |
-| POST `/updateUser` `{"user":{"userId":..}}` | update-user | 200 updated user |
-| DELETE `/deleteUsers` `{"userIds":[..]}` | delete-users | 204 |
-| POST `/changeUserStatus` `{"userId","status":"ENABLE\|DISABLE"}` | change-user-status | 204 |
-| POST `/addRole` `{"roles":{"name","description"}}` | create-role | 201 |
-| DELETE `/deleteRole` `{"roleName":".."}` | delete-role | 204 |
-
-Errors are returned as `{timestamp,status,errorCode,message,details}`. The codes are defined in `ErrorCode` and the messages in `messages.properties`.
-
-## Configuration (`application.yaml`)
-
-| Property | Env variable | Default |
-|---|---|---|
-| `server.port` | `SERVER_PORT` | 9012 |
-| `keycloak.server-url` | `KEYCLOAK_URL` | http://localhost:8080 |
-| `keycloak.realm` | `KEYCLOAK_REALM` | usermanagement-local |
-| `keycloak.admin-client.*` | `KEYCLOAK_ADMIN_CLIENT_ID/SECRET` | um-admin |
-| `keycloak.anonymous-client.*` | `KEYCLOAK_ANONYMOUS_CLIENT_ID/SECRET` | um-anonymous |
-| `keycloak.temporary-password` | | false |
-| `keycloak.email-verification.enabled` | | false (true needs SMTP configured in the realm) |
-| `app.security.public-urls` | | anonymous, swagger, health |
-| `app.security.api-roles.<key>` | | `[USER_MANAGEMENT_ADMIN]` |
-
-## Differences from the original (intentional)
-
-- **More accurate HTTP statuses:** "already exists" returns 409, "Keycloak unreachable" returns 503, and "forbidden" returns 403 (UM112).
-- **Separate SMTP error code:** "email verification disabled" now uses its own code, UM113. In the original it collided with UM112.
-- **Password never echoed:** the password is never returned in a response.
-- **Cached admin token:** the admin token is reused until it is close to expiry.
-- **`updateUser` fixes:**
-  - It merges attributes instead of overwriting them, which fixes the `entity_type` bug.
-  - It no longer re-enables disabled users.
-  - When it replaces roles, it keeps `default-roles-*`.
-- **Unimplemented endpoints:** `/refresh`, `/serviceAccountToken`, `/offline` and the mock IdP are documented in the original README but were never implemented there, so they are not implemented here either.
+Kafka, MCP, request/response logging + masking (bm-logging-utils), MDC headers `X-Transaction-Id`,
+`X-Correlation-Id`, `X-Source-Channel`, `X-Tenant-Id` (you can still send them; they are ignored), Russian messages.
 
 ## Build & test
 
-```powershell
-.\gradlew.bat build      # compiles + runs unit tests (Keycloak is mocked; no Docker needed)
+```
+gradlew build     # compiles and runs the unit tests (Keycloak is mocked)
 ```

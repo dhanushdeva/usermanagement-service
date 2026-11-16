@@ -1,96 +1,45 @@
-# ==========================================
-# Gradle
-# ==========================================
-.gradle/
+HELP.md
+.gradle
+.claude
 build/
-!gradle/wrapper/gradle-wrapper.jar
-
-# Keep Gradle wrapper files
-!gradle/wrapper/
-!gradle/wrapper/gradle-wrapper.properties
-
-# ==========================================
-# Java
-# ==========================================
-*.class
-*.jar
-Ignored files:
-    .gradle/
-    build/
-    gradle/wrapper/gradle-wrapper.jar
-    out/
-*.war
-*.ear
-hs_err_pid*
-
-# ==========================================
-# Spring Boot
-# ==========================================
-logs/
-*.log
-spring.log
-
-# ==========================================
-# IntelliJ IDEA
-# ==========================================
-.idea/
-*.iml
-*.ipr
-*.iws
-out/
-
-# ==========================================
-# Eclipse / STS
-# ==========================================
-.apt_generated/
+!**/src/main/**
+!**/src/test/**
+bin/
+### STS ###
+.apt_generated
 .classpath
 .factorypath
 .project
-.settings/
+.settings
 .springBeans
-.sts4-cache/
+.sts4-cache
 
-# ==========================================
-# VS Code
-# ==========================================
-.vscode/
-.history/
 
-# ==========================================
-# NetBeans
-# ==========================================
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+
+### JARs
+*.jar
+# keep the Gradle wrapper jar (must come after *.jar)
+!gradle/wrapper/gradle-wrapper.jar
+
+### NetBeans ###
 /nbproject/private/
 /nbbuild/
 /dist/
 /nbdist/
 /.nb-gradle/
 
-# ==========================================
-# Environment variables and secrets
-# ==========================================
-.env
-.env.*
-!.env.example
-*.pem
-*.key
-*.p12
-*.jks
+### VS Code ###
+.vscode/
 
-# ==========================================
-# OS generated files
-# ==========================================
-.DS_Store
-Thumbs.db
-Desktop.ini
+### Logs ###
+logs/
+*.log
 
-# ==========================================
-# Temporary files
-# ==========================================
-*.tmp
-*.swp
-*.bak
-
-# ==========================================
-# Docker
-# ==========================================
-*.pid
+# local secrets (see secrets.properties.example)
+secrets.properties
